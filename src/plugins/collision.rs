@@ -42,9 +42,9 @@ impl Plugin for CollisionPlugin {
                 update_bounds_system,
                 bullet_wall_collision_system,
                 tank_wall_collision_system,
-            )
-                .chain(),
+            ),
         );
+        //.add_systems(PreUpdate, );
     }
 }
 
@@ -115,21 +115,30 @@ fn bullet_wall_collision_system(
 }
 fn tank_wall_collision_system(
     mut tank_query: Query<(&mut Velocity, &mut Transform, &Collider), With<Tank>>,
-    wall_query: Query<(&Collider, &Direction)>,
+    wall_query: Query<(&Collider, &Wall)>,
 ) {
     for (mut velocity, mut transform, tank_collider) in tank_query.iter_mut() {
-        for (wall_collider, direction) in wall_query.iter() {
-            if tank_collider.collides_with(wall_collider) {
-                // Get direction vector based on wall direction
-                let push_direction = match direction {
-                    Direction::Up => Vec2::new(0.0, -1.0),
-                    Direction::Down => Vec2::new(0.0, 1.0),
-                    Direction::Left => Vec2::new(1.0, 0.0),
-                    Direction::Right => Vec2::new(-1.0, 0.0),
-                };
+        for (wall_collider, wall) in wall_query.iter() {
+            if let Some((collision_normal, penetration_depth)) =
+                tank_collider.collision_info(wall_collider, Some(wall.wall_type.clone()))
+            {
+                // Adjust tank position to resolve the collision
+                let adjustment = collision_normal * penetration_depth;
+                transform.translation.x += adjustment.x * 1.;
+                transform.translation.y += adjustment.y * 1.;
 
-                // Push tank slightly away from wall to prevent sticking
-                transform.translation += (push_direction * 5.0).extend(0.0);
+                // Adjust velocity to prevent moving into wall
+                let velocity_vec = Vec2::new(velocity.x, velocity.y);
+                let vn = velocity_vec.dot(collision_normal);
+                if vn < 0.0 {
+                    // If moving into the wall, zero out the component along the normal
+                    let velocity_adjustment = collision_normal * vn;
+                    let new_velocity = velocity_vec - velocity_adjustment;
+                    velocity.x = new_velocity.x;
+                    velocity.y = new_velocity.y;
+                }
+                // Break after handling the collision with one wall
+                break;
             }
         }
     }

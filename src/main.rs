@@ -22,7 +22,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins((TankPlugin, BulletPlugin, CollisionPlugin))
         .add_systems(Startup, (camera_setup, setup_walls).chain())
-        .add_systems(Update, (movement_system).chain())
+        .add_systems(PostUpdate, movement_system)
         .run();
 }
 

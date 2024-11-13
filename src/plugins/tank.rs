@@ -13,7 +13,7 @@ pub const TANK_ROTATION_SPEED: f32 = 1.5;
 
 pub const TANK_X_HALF_EXTENT: f32 = TANK_LENGTH / 2.;
 pub const TANK_Y_HALF_EXTENT: f32 = TANK_WIDTH / 2.;
-pub const TANK_SPEED: f32 = 150.;
+pub const TANK_SPEED: f32 = 100.;
 pub const TANK_SIZE: (f32, f32) = (60., 40.);
 #[derive(Component, Default)]
 pub struct Tank {
@@ -96,7 +96,6 @@ fn tank_movement_system(
     } else {
         0.0
     };
-
     velocity.x = direction.x * movement;
     velocity.y = direction.y * movement;
 }

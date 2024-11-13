@@ -1797,14 +1797,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "game"
-version = "0.1.0"
-dependencies = [
- "bevy",
- "rand",
-]
-
-[[package]]
 name = "gethostname"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3375,6 +3367,14 @@ dependencies = [
  "num-traits",
  "serde",
  "slotmap",
+]
+
+[[package]]
+name = "tank-game"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rand",
 ]
 
 [[package]]

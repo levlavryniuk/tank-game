@@ -1,0 +1,771 @@
+
+ File path: ./src/plugins/shooting.rs 
+ 
+use bevy::{prelude::*, render::primitives::Aabb};
+
+use crate::{
+    constants::{BULLET_HALF_EXTENTS, BULLET_OFFSET, BULLET_SIZE, BULLET_SPEED},
+    Tank, Velocity,
+};
+
+use super::collision::Dynamic;
+use crate::collider::Collider;
+
+#[derive(Component, Debug)]
+pub struct Bullet {
+    /// Angle in degrees
+    pub angle: f32,
+    pub speed: f32,
+    pub bounce_count: u8,
+    pub last_hit_wall: Option<Vec3>,
+}
+
+impl Bullet {
+    fn new(angle: f32) -> Self {
+        Self {
+            angle,
+            speed: BULLET_SPEED,
+            bounce_count: 0,
+            last_hit_wall: None,
+        }
+    }
+    pub fn velocity(&self) -> Vec2 {
+        let angle_rad = self.angle.to_radians();
+        Vec2::new(angle_rad.cos(), angle_rad.sin()) * self.speed
+    }
+}
+pub struct BulletPlugin;
+impl Plugin for BulletPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, (shooting_system, bullet_velocity_system));
+    }
+}
+
+fn bullet_velocity_system(mut query: Query<(&mut Velocity, &Bullet)>) {
+    for (mut velocity, bullet) in query.iter_mut() {
+        let x_modifier = bullet.angle.to_radians().cos();
+        let y_modifier = bullet.angle.to_radians().sin();
+
+        velocity.x = x_modifier * bullet.speed;
+        velocity.y = y_modifier * bullet.speed;
+    }
+}
+
+fn shooting_system(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    query: Query<&Transform, With<Tank>>,
+) {
+    if !keys.just_pressed(KeyCode::Space) {
+        return;
+    }
+
+    let transform = query.single();
+
+    let rotate = transform.rotation.to_euler(EulerRot::XYZ).2;
+
+    let x_modifier = rotate.cos();
+    let y_modifier = rotate.sin();
+    let tank_x = transform.translation.x;
+    let tank_y = transform.translation.y;
+
+    let (bullet_x, bullet_y) = (
+        tank_x + BULLET_OFFSET * x_modifier,
+        tank_y + BULLET_OFFSET * y_modifier,
+    );
+    let center = (bullet_x, bullet_y, 0.).into();
+
+    let aabb = Aabb {
+        center,
+        half_extents: BULLET_HALF_EXTENTS.into(),
+    };
+    let bullet = Bullet::new(rotate.to_degrees());
+    commands
+        .spawn(ColorMesh2dBundle {
+            mesh: meshes.add(Circle::new(BULLET_SIZE)).into(),
+            transform: Transform::from_xyz(bullet_x, bullet_y, 0.),
+            ..default()
+        })
+        .insert(Velocity { x: 0., y: 0. })
+        .insert(bullet)
+        .insert(Collider::Aabb(aabb))
+        .insert(Dynamic);
+}
+
+ File path: ./src/plugins/mod.rs 
+ 
+pub mod collision;
+pub mod shooting;
+pub mod tank;
+
+ File path: ./src/plugins/tank.rs 
+ 
+use bevy::prelude::*;
+
+use crate::collider::{Collider, Obb};
+use crate::{
+    constants::{GAME_FIELD_HEIGHT, GAME_FIELD_WIDTH, GRID_CELL_SIZE},
+    Velocity,
+};
+
+use super::collision::Dynamic;
+pub const TANK_LENGTH: f32 = 60.;
+pub const TANK_WIDTH: f32 = 40.;
+pub const TANK_ROTATION_SPEED: f32 = 1.5;
+
+pub const TANK_X_HALF_EXTENT: f32 = TANK_LENGTH / 2.;
+pub const TANK_Y_HALF_EXTENT: f32 = TANK_WIDTH / 2.;
+pub const TANK_SPEED: f32 = 100.;
+pub const TANK_SIZE: (f32, f32) = (60., 40.);
+#[derive(Component, Default)]
+pub struct Tank {
+    pub rotation_speed: f32,
+    pub speed: f32,
+}
+
+impl Tank {
+    pub fn size() -> Vec2 {
+        TANK_SIZE.into()
+    }
+    pub fn new() -> Self {
+        Self {
+            speed: TANK_SPEED,
+            rotation_speed: TANK_ROTATION_SPEED,
+        }
+    }
+    pub fn half_extents() -> Vec2 {
+        (TANK_LENGTH / 2.0, TANK_WIDTH / 2.0).into()
+    }
+}
+
+pub struct TankPlugin;
+impl Plugin for TankPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, setup)
+            .add_systems(Update, tank_movement_system);
+    }
+}
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let center = (
+        -GAME_FIELD_WIDTH / 2. + GRID_CELL_SIZE / 2.,
+        GAME_FIELD_HEIGHT / 2. - GRID_CELL_SIZE / 2.,
+    );
+    let obb = Obb {
+        center: center.into(),
+        half_extents: Tank::half_extents(),
+        rotation: 0.,
+    };
+    commands
+        .spawn(SpriteBundle {
+            texture: asset_server.load("tank.png"),
+            sprite: Sprite {
+                custom_size: Some(Tank::size()),
+                ..default()
+            },
+            transform: Transform::from_xyz(center.0, center.1, 0.),
+
+            ..default()
+        })
+        .insert(Tank::new())
+        .insert(Collider::Obb(obb))
+        .insert(Dynamic)
+        .insert(Velocity::default());
+}
+fn tank_movement_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<(&Tank, &mut Transform, &mut Velocity)>,
+) {
+    let (tank, mut transform, mut velocity) = query.single_mut();
+    let rotation_amount = if keyboard_input.pressed(KeyCode::KeyA) {
+        tank.rotation_speed
+    } else if keyboard_input.pressed(KeyCode::KeyD) {
+        -tank.rotation_speed
+    } else {
+        0.0
+    };
+
+    let rotation_radians = rotation_amount.to_radians();
+    transform.rotate(Quat::from_rotation_z(rotation_radians));
+
+    let angle = transform.rotation.to_euler(EulerRot::XYZ).2;
+    let direction = Vec2::new(angle.cos(), angle.sin());
+
+    let movement = if keyboard_input.pressed(KeyCode::KeyW) {
+        tank.speed
+    } else if keyboard_input.pressed(KeyCode::KeyS) {
+        -tank.speed
+    } else {
+        0.0
+    };
+    velocity.x = direction.x * movement;
+    velocity.y = direction.y * movement;
+}
+
+ File path: ./src/plugins/collision.rs 
+ 
+use bevy::prelude::*;
+
+use crate::{
+    collider::{get_aabb_projection_radius, get_axes, get_obb_projection_radius, Collider},
+    walls::{Direction, Wall, WallType},
+    Velocity,
+};
+
+use super::{shooting::Bullet, tank::Tank};
+
+#[derive(Component)]
+pub struct Static;
+
+#[derive(Component)]
+pub struct Dynamic;
+
+type OnlyDynamic = (With<Dynamic>, Without<Static>);
+
+fn update_bounds_system(mut query: Query<(&Transform, &mut Collider), OnlyDynamic>) {
+    for (transform, mut collider) in query.iter_mut() {
+        match *collider {
+            Collider::Aabb(ref mut aabb) => {
+                let xyz = transform.translation.xyz();
+                aabb.center = xyz.into();
+            }
+            Collider::Obb(ref mut obb) => {
+                let angle = transform.rotation.to_euler(EulerRot::XYZ).2.to_degrees();
+                let xy = transform.translation.xy();
+                obb.center = xy;
+                obb.rotation = angle;
+            }
+        }
+    }
+}
+
+pub struct CollisionPlugin;
+impl Plugin for CollisionPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                update_bounds_system,
+                bullet_wall_collision_system,
+                tank_wall_collision_system,
+            ),
+        );
+        //.add_systems(PreUpdate, );
+    }
+}
+
+fn reflect_angle(angle: f32, wall_type: WallType) -> f32 {
+    match wall_type {
+        WallType::Horizontal => -angle,
+        WallType::Vertical => 180.0 - angle,
+    }
+}
+
+fn bullet_wall_collision_system(
+    mut commands: Commands,
+    mut bullet_query: Query<(Entity, &Collider, &mut Bullet, &mut Transform)>,
+    wall_query: Query<(&Collider, &Wall)>,
+) {
+    for (bullet_entity, bullet_collider, mut bullet, mut bullet_transform) in
+        bullet_query.iter_mut()
+    {
+        let mut collided = false;
+
+        for (wall_collider, wall) in wall_query.iter() {
+            let wall_aabb = match wall_collider {
+                Collider::Obb(_) => {
+                    return;
+                }
+                Collider::Aabb(a) => a,
+            };
+
+            let is_same_wall = match bullet.last_hit_wall {
+                Some(wall) => wall == wall_aabb.center.into(),
+                None => false,
+            };
+
+            if is_same_wall {
+                continue;
+            }
+            let collision = bullet_collider.collides_with(wall_collider);
+
+            if collision {
+                let new_angle = reflect_angle(bullet.angle, wall.wall_type.clone());
+                bullet.angle = new_angle;
+                bullet.last_hit_wall = Some(wall_aabb.center.into());
+
+                let normal = match wall.wall_type {
+                    WallType::Horizontal => {
+                        Vec2::new(0.0, if bullet.velocity().y > 0.0 { -1.0 } else { 1.0 })
+                    }
+                    WallType::Vertical => {
+                        Vec2::new(if bullet.velocity().x > 0.0 { -1.0 } else { 1.0 }, 0.0)
+                    }
+                };
+                let adjustment = normal * 0.1;
+                bullet_transform.translation.x += adjustment.x;
+                bullet_transform.translation.y += adjustment.y;
+
+                collided = true;
+                break;
+            }
+        }
+
+        if collided {
+            bullet.bounce_count += 1;
+            if bullet.bounce_count > 5 {
+                commands.entity(bullet_entity).despawn();
+            }
+        }
+    }
+}
+fn tank_wall_collision_system(
+    mut tank_query: Query<(&mut Velocity, &mut Transform, &Collider), With<Tank>>,
+    wall_query: Query<(&Collider, &Direction)>,
+) {
+    for (mut velocity, mut transform, tank_collider) in tank_query.iter_mut() {
+        let mut collided = false;
+
+        for (wall_collider, direction) in wall_query.iter() {
+            if tank_collider.collides_with(wall_collider) {
+                //here you have to implement the logic to stop the tank from moving
+                break;
+            }
+        }
+
+        if !collided {}
+    }
+}
+
+ File path: ./src/walls.rs 
+ 
+use bevy::{prelude::*, render::primitives::Aabb, sprite::Mesh2dHandle, utils::HashSet};
+use rand::seq::SliceRandom;
+
+const H_WALL_HALF_SIZE: (f32, f32, f32) = (GRID_CELL_SIZE / 2., 2.5, 0.);
+const V_WALL_HALF_SIZE: (f32, f32, f32) = (2.5, GRID_CELL_SIZE / 2., 0.);
+
+use crate::{
+    collider::Collider,
+    constants::{
+        GAME_FIELD_HEIGHT, GAME_FIELD_WIDTH, GRID_CELL_HORIZONTAL_AMOUNT, GRID_CELL_SIZE,
+        GRID_CELL_VERTICAL_AMOUNT,
+    },
+    plugins::collision::Static,
+};
+
+#[derive(Clone)]
+pub enum WallType {
+    Horizontal,
+    Vertical,
+}
+#[derive(Component)]
+pub struct Wall {
+    pub wall_type: WallType,
+}
+#[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, Component)]
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Direction {
+    pub fn offset(&self) -> (i32, i32) {
+        match self {
+            Direction::Up => (0, 1),
+            Direction::Down => (0, -1),
+            Direction::Left => (-1, 0),
+            Direction::Right => (1, 0),
+        }
+    }
+    pub fn offset_f32(&self) -> (f32, f32, f32) {
+        let (x, y) = self.offset();
+        (x as f32, y as f32, 0.0)
+    }
+    pub fn opposite(&self) -> Direction {
+        match self {
+            Direction::Up => Direction::Down,
+            Direction::Down => Direction::Up,
+            Direction::Left => Direction::Right,
+            Direction::Right => Direction::Left,
+        }
+    }
+}
+
+impl From<Direction> for WallType {
+    fn from(value: Direction) -> Self {
+        match value {
+            Direction::Up | Direction::Down => WallType::Horizontal,
+            Direction::Left | Direction::Right => WallType::Vertical,
+        }
+    }
+}
+
+pub fn setup_walls(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    let mut rng = rand::thread_rng();
+    let mut frontier = vec![];
+    let mut visited =
+        vec![vec![false; GRID_CELL_VERTICAL_AMOUNT as usize]; GRID_CELL_HORIZONTAL_AMOUNT as usize];
+    let mut walls = HashSet::new();
+
+    for x in 0..GRID_CELL_HORIZONTAL_AMOUNT as usize {
+        for y in 0..GRID_CELL_VERTICAL_AMOUNT as usize {
+            for direction in [
+                Direction::Up,
+                Direction::Down,
+                Direction::Left,
+                Direction::Right,
+            ] {
+                walls.insert((x, y, direction));
+            }
+        }
+    }
+
+    let horizontal_wall_mesh: Mesh2dHandle = meshes.add(Rectangle::new(GRID_CELL_SIZE, 5.0)).into();
+    let vertical_wall_mesh: Mesh2dHandle = meshes.add(Rectangle::new(5.0, GRID_CELL_SIZE)).into();
+
+    let start_x = 0;
+    let start_y = 0;
+    mark_cell_as_maze(start_x, start_y, &mut visited, &mut frontier);
+
+    while let Some((x, y)) = frontier.pop() {
+        let maze_neighbors = get_maze_neighbors(x, y, &visited);
+
+        if let Some(&(nx, ny, direction)) = maze_neighbors.choose(&mut rng) {
+            walls.remove(&(x, y, direction));
+            walls.remove(&(nx, ny, direction.opposite()));
+
+            mark_cell_as_maze(x, y, &mut visited, &mut frontier);
+        }
+
+        frontier.shuffle(&mut rng);
+    }
+
+    for (x, y, direction) in walls.iter() {
+        place_wall(
+            &mut commands,
+            &horizontal_wall_mesh,
+            &vertical_wall_mesh,
+            *x,
+            *y,
+            *direction,
+        );
+    }
+}
+fn place_wall(
+    commands: &mut Commands,
+    horizontal_wall_mesh: &Mesh2dHandle,
+    vertical_wall_mesh: &Mesh2dHandle,
+    x: usize,
+    y: usize,
+    direction: Direction,
+) {
+    let cell_x_center = -GAME_FIELD_WIDTH / 2.0 + GRID_CELL_SIZE * x as f32 + GRID_CELL_SIZE / 2.0;
+    let cell_y_center = -GAME_FIELD_HEIGHT / 2.0 + GRID_CELL_SIZE * y as f32 + GRID_CELL_SIZE / 2.0;
+
+    let wall_pos = match direction {
+        Direction::Up => (cell_x_center, cell_y_center + GRID_CELL_SIZE / 2.0),
+        Direction::Down => (cell_x_center, cell_y_center - GRID_CELL_SIZE / 2.0),
+        Direction::Left => (cell_x_center - GRID_CELL_SIZE / 2.0, cell_y_center),
+        Direction::Right => (cell_x_center + GRID_CELL_SIZE / 2.0, cell_y_center),
+    };
+
+    if is_within_bounds(x as i32, y as i32) {
+        let center = (wall_pos.0, wall_pos.1, 0.).into();
+        let (wall_mesh, aabb) = if matches!(direction, Direction::Up | Direction::Down) {
+            let aabb = Aabb {
+                center,
+                half_extents: H_WALL_HALF_SIZE.into(),
+            };
+            (horizontal_wall_mesh, aabb)
+        } else {
+            let aabb = Aabb {
+                center,
+                half_extents: V_WALL_HALF_SIZE.into(),
+            };
+            (vertical_wall_mesh, aabb)
+        };
+        println!("wall center {center}");
+        commands.spawn(Text2dBundle {
+            transform: Transform::from_xyz(center.x, center.y, 1.),
+            text: Text::from_section(
+                format!("{}", center),
+                TextStyle {
+                    color: Color::srgb(230., 100., 100.),
+                    font_size: 10.,
+                    ..default()
+                },
+            ),
+            ..default()
+        });
+
+        commands
+            .spawn(ColorMesh2dBundle {
+                mesh: wall_mesh.clone(),
+
+                transform: Transform::from_xyz(wall_pos.0, wall_pos.1, 0.0),
+                ..Default::default()
+            })
+            .insert(Wall {
+                wall_type: direction.into(),
+            })
+            .insert(Static)
+            .insert(direction)
+            .insert(Collider::Aabb(aabb));
+    }
+}
+
+fn mark_cell_as_maze(
+    x: usize,
+    y: usize,
+    visited: &mut [Vec<bool>],
+    frontier: &mut Vec<(usize, usize)>,
+) {
+    visited[x][y] = true;
+
+    for direction in [
+        Direction::Up,
+        Direction::Down,
+        Direction::Left,
+        Direction::Right,
+    ] {
+        let (dx, dy) = direction.offset();
+        let nx = x as i32 + dx;
+        let ny = y as i32 + dy;
+
+        if is_within_bounds(nx, ny) && !visited[nx as usize][ny as usize] {
+            let new_frontier = (nx as usize, ny as usize);
+            if !frontier.contains(&new_frontier) {
+                frontier.push(new_frontier);
+            }
+        }
+    }
+}
+
+fn get_maze_neighbors(x: usize, y: usize, visited: &[Vec<bool>]) -> Vec<(usize, usize, Direction)> {
+    let mut neighbors = Vec::new();
+    for direction in [
+        Direction::Up,
+        Direction::Down,
+        Direction::Left,
+        Direction::Right,
+    ] {
+        let (dx, dy) = direction.offset();
+        let nx = x as i32 + dx;
+        let ny = y as i32 + dy;
+        if is_within_bounds(nx, ny) && visited[nx as usize][ny as usize] {
+            neighbors.push((nx as usize, ny as usize, direction));
+        }
+    }
+    neighbors
+}
+
+fn is_within_bounds(x: i32, y: i32) -> bool {
+    x >= 0
+        && y >= 0
+        && x < GRID_CELL_HORIZONTAL_AMOUNT as i32
+        && y < GRID_CELL_VERTICAL_AMOUNT as i32
+}
+
+ File path: ./src/collider.rs 
+ 
+use bevy::{prelude::*, render::primitives::Aabb};
+
+#[derive(Debug, Clone)]
+pub struct Obb {
+    pub center: Vec2,
+    pub half_extents: Vec2,
+    pub rotation: f32,
+}
+
+#[derive(Component, Debug, Clone)]
+pub enum Collider {
+    Aabb(Aabb),
+    Obb(Obb),
+}
+
+pub fn get_axes(rotation: f32) -> [Vec2; 2] {
+    let angle = rotation.to_radians();
+    let axis_1 = Vec2::new(angle.cos(), angle.sin());
+    let axis_2 = Vec2::new(-angle.sin(), angle.cos());
+    [axis_1, axis_2]
+}
+
+pub fn get_obb_projection_radius(axis: Vec2, half_extents: Vec2, u_x: Vec2, u_y: Vec2) -> f32 {
+    half_extents.x * axis.dot(u_x).abs() + half_extents.y * axis.dot(u_y).abs()
+}
+
+pub fn get_aabb_projection_radius(axis: Vec2, half_extents: Vec2) -> f32 {
+    half_extents.x * axis.x.abs() + half_extents.y * axis.y.abs()
+}
+
+fn aabb_x_obb(aabb: Collider, obb: Collider) -> bool {
+    let aabb = match aabb {
+        Collider::Aabb(aabb) => aabb,
+        _ => panic!("Expected Aabb"),
+    };
+    let obb = match obb {
+        Collider::Obb(obb) => obb,
+        _ => panic!("Expected Obb"),
+    };
+
+    // Centers of AABB and OBB
+    let aabb_center = aabb.center.xy();
+    let obb_center = obb.center;
+
+    // Calculate the vector from the AABB to the OBB
+    let translation_vec = obb_center - aabb_center;
+
+    // Axes to check for separation: the axes of the AABB and OBB
+    let aabb_axes = [Vec2::X, Vec2::Y];
+    let obb_axes = get_axes(obb.rotation); // OBB's rotated axes
+    let axes = aabb_axes.iter().chain(&obb_axes);
+
+    // Half-extents of AABB
+    let aabb_half_extents = aabb.half_extents.xy();
+
+    for &axis in axes {
+        // Project AABB and OBB onto the axis
+        let aabb_radius = get_aabb_projection_radius(axis, aabb_half_extents);
+        let obb_radius =
+            get_obb_projection_radius(axis, obb.half_extents, obb_axes[0], obb_axes[1]);
+
+        // Calculate the distance between projections along this axis
+        let distance = translation_vec.dot(axis).abs();
+
+        // Debugging print statements for tracking the values
+        println!(
+            "Axis: {:?}, Translation Vec: {:?}, Distance: {}, AABB Radius: {}, OBB Radius: {}",
+            axis, translation_vec, distance, aabb_radius, obb_radius
+        );
+
+        // If there is a separating axis (distance is greater than sum of radii), return false
+        if distance > aabb_radius + obb_radius {
+            return false;
+        }
+    }
+    println!("Collision detected with wall {:?}", aabb);
+
+    // If no separating axis was found, return true (collision detected)
+    true
+}
+
+fn aabb_x_aabb(aabb_1: Collider, aabb_2: Collider) -> bool {
+    let aabb_1 = match aabb_1 {
+        Collider::Aabb(aabb) => aabb,
+        _ => panic!("Expected Aabb"),
+    };
+    let aabb_2 = match aabb_2 {
+        Collider::Aabb(aabb) => aabb,
+        _ => panic!("Expected Aabb"),
+    };
+    let min = aabb_1.min();
+    let max = aabb_1.max();
+    let other_min = aabb_2.min();
+    let other_max = aabb_2.max();
+    min.x <= other_max.x && max.x >= other_min.x && min.y <= other_max.y && max.y >= other_min.y
+}
+
+impl Collider {
+    pub fn collides_with(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Collider::Aabb(_), Collider::Aabb(_)) => aabb_x_aabb(self.clone(), other.clone()),
+            (Collider::Obb(_), Collider::Obb(_)) => panic!("Obb-Obb collision not implemented"),
+            (Collider::Aabb(_), Collider::Obb(_)) => aabb_x_obb(self.clone(), other.clone()),
+            (Collider::Obb(_), Collider::Aabb(_)) => aabb_x_obb(other.clone(), self.clone()),
+        }
+    }
+
+    pub fn compute_collision_normal(&self, other: &Collider) -> Vec2 {
+        let delta = self.center() - other.center();
+        if delta.x.abs() > delta.y.abs() {
+            Vec2::new(delta.x.signum(), 0.0)
+        } else {
+            Vec2::new(0.0, delta.y.signum())
+        }
+    }
+
+    pub fn compute_penetration_depth(&self, other: &Collider) -> f32 {
+        let overlap_x = (self.half_extents().x + other.half_extents().x)
+            - (self.center().x - other.center().x).abs();
+        let overlap_y = (self.half_extents().y + other.half_extents().y)
+            - (self.center().y - other.center().y).abs();
+
+        if overlap_x > 0.0 && overlap_y > 0.0 {
+            overlap_x.min(overlap_y)
+        } else {
+            0.0
+        }
+    }
+
+    pub fn center(&self) -> Vec2 {
+        match self {
+            Collider::Aabb(aabb) => aabb.center.xy(),
+            Collider::Obb(obb) => obb.center,
+        }
+    }
+
+    pub fn half_extents(&self) -> Vec2 {
+        match self {
+            Collider::Aabb(aabb) => aabb.half_extents.xy(),
+            Collider::Obb(obb) => obb.half_extents,
+        }
+    }
+}
+
+ File path: ./src/constants.rs 
+ 
+pub const GAME_FIELD_WIDTH: f32 = 720.0;
+pub const GAME_FIELD_HEIGHT: f32 = 720.0;
+pub const GRID_CELL_SIZE: f32 = 120.0;
+pub const GRID_CELL_HORIZONTAL_AMOUNT: u32 = (GAME_FIELD_WIDTH / GRID_CELL_SIZE) as u32;
+pub const GRID_CELL_VERTICAL_AMOUNT: u32 = (GAME_FIELD_HEIGHT / GRID_CELL_SIZE) as u32;
+
+pub const BULLET_SPEED: f32 = 250.;
+pub const BULLET_SIZE: f32 = 5.;
+pub const BULLET_HALF_EXTENTS: (f32, f32, f32) = (2.5, 2.5, 0.);
+pub const BULLET_OFFSET: f32 = 20.;
+
+ File path: ./src/main.rs 
+ 
+mod collider;
+mod constants;
+mod plugins;
+mod walls;
+use bevy::prelude::*;
+
+use plugins::{
+    collision::CollisionPlugin,
+    shooting::BulletPlugin,
+    tank::{Tank, TankPlugin},
+};
+use walls::setup_walls;
+
+#[derive(Component, Default)]
+pub struct Velocity {
+    x: f32,
+    y: f32,
+}
+
+fn main() {
+    App::new()
+        .add_plugins(DefaultPlugins)
+        .add_plugins((TankPlugin, BulletPlugin, CollisionPlugin))
+        .add_systems(Startup, (camera_setup, setup_walls).chain())
+        .add_systems(PostUpdate, movement_system)
+        .run();
+}
+
+fn movement_system(time: Res<Time>, mut query: Query<(&mut Transform, &Velocity)>) {
+    for (mut transform, velocity) in query.iter_mut() {
+        transform.translation.x += velocity.x * time.delta_seconds();
+        transform.translation.y += velocity.y * time.delta_seconds();
+    }
+}
+
+fn camera_setup(mut commands: Commands) {
+    commands.spawn(Camera2dBundle::default());
+}
