@@ -1,19 +1,14 @@
 use bevy::prelude::*;
+use bevy_rapier2d::prelude::*;
 
-use crate::collider::{Collider, Obb};
-use crate::{
-    constants::{GAME_FIELD_HEIGHT, GAME_FIELD_WIDTH, GRID_CELL_SIZE},
-    Velocity,
-};
-
-use super::collision::Dynamic;
+use crate::constants::{GAME_FIELD_HEIGHT, GAME_FIELD_WIDTH, GRID_CELL_SIZE};
 pub const TANK_LENGTH: f32 = 60.;
 pub const TANK_WIDTH: f32 = 40.;
-pub const TANK_ROTATION_SPEED: f32 = 1.5;
+pub const TANK_ROTATION_SPEED: f32 = 90.0;
 
 pub const TANK_X_HALF_EXTENT: f32 = TANK_LENGTH / 2.;
 pub const TANK_Y_HALF_EXTENT: f32 = TANK_WIDTH / 2.;
-pub const TANK_SPEED: f32 = 100.;
+pub const TANK_SPEED: f32 = 150.;
 pub const TANK_SIZE: (f32, f32) = (60., 40.);
 #[derive(Component, Default)]
 pub struct Tank {
@@ -49,42 +44,38 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
         -GAME_FIELD_WIDTH / 2. + GRID_CELL_SIZE / 2.,
         GAME_FIELD_HEIGHT / 2. - GRID_CELL_SIZE / 2.,
     );
-    let obb = Obb {
-        center: center.into(),
-        half_extents: Tank::half_extents(),
-        rotation: 0.,
-    };
     commands
-        .spawn(SpriteBundle {
-            texture: asset_server.load("tank.png"),
-            sprite: Sprite {
+        .spawn((
+            Sprite {
+                image: asset_server.load("tank.png").into(),
                 custom_size: Some(Tank::size()),
                 ..default()
             },
-            transform: Transform::from_xyz(center.0, center.1, 0.),
-
-            ..default()
+            RigidBody::Dynamic,
+        ))
+        .insert(Transform::from_xyz(center.0, center.1, 0.))
+        .insert(GravityScale(0.))
+        .insert(KinematicCharacterController { ..default() })
+        .insert(Velocity {
+            linvel: Vec2::ZERO,
+            angvel: 1.,
         })
-        .insert(Tank::new())
-        .insert(Collider::Obb(obb))
-        .insert(Dynamic)
-        .insert(Velocity::default());
+        .insert(Collider::cuboid(TANK_X_HALF_EXTENT, TANK_Y_HALF_EXTENT))
+        .insert(Tank::new());
 }
 fn tank_movement_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut query: Query<(&Tank, &mut Transform, &mut Velocity)>,
 ) {
-    let (tank, mut transform, mut velocity) = query.single_mut();
-    let rotation_amount = if keyboard_input.pressed(KeyCode::KeyA) {
-        tank.rotation_speed
-    } else if keyboard_input.pressed(KeyCode::KeyD) {
-        -tank.rotation_speed
-    } else {
-        0.0
-    };
+    let (tank, transform, mut velocity) = query.single_mut();
 
-    let rotation_radians = rotation_amount.to_radians();
-    transform.rotate(Quat::from_rotation_z(rotation_radians));
+    if keyboard_input.pressed(KeyCode::KeyA) {
+        velocity.angvel = tank.rotation_speed.to_radians();
+    } else if keyboard_input.pressed(KeyCode::KeyD) {
+        velocity.angvel = -tank.rotation_speed.to_radians();
+    } else {
+        velocity.angvel = 0.0;
+    }
 
     let angle = transform.rotation.to_euler(EulerRot::XYZ).2;
     let direction = Vec2::new(angle.cos(), angle.sin());
@@ -96,6 +87,6 @@ fn tank_movement_system(
     } else {
         0.0
     };
-    velocity.x = direction.x * movement;
-    velocity.y = direction.y * movement;
+
+    velocity.linvel = direction * movement;
 }

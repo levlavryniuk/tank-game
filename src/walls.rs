@@ -1,11 +1,11 @@
-use bevy::{prelude::*, render::primitives::Aabb, sprite::Mesh2dHandle, utils::HashSet};
+use bevy::{prelude::*, render::primitives::Aabb, utils::HashSet};
+use bevy_rapier2d::prelude::*;
 use rand::seq::SliceRandom;
 
 const H_WALL_HALF_SIZE: (f32, f32, f32) = (GRID_CELL_SIZE / 2., 2.5, 0.);
 const V_WALL_HALF_SIZE: (f32, f32, f32) = (2.5, GRID_CELL_SIZE / 2., 0.);
 
 use crate::{
-    collider::Collider,
     constants::{
         GAME_FIELD_HEIGHT, GAME_FIELD_WIDTH, GRID_CELL_HORIZONTAL_AMOUNT, GRID_CELL_SIZE,
         GRID_CELL_VERTICAL_AMOUNT,
@@ -62,7 +62,11 @@ impl From<Direction> for WallType {
     }
 }
 
-pub fn setup_walls(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+pub fn setup_walls(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
     let mut rng = rand::thread_rng();
     let mut frontier = vec![];
     let mut visited =
@@ -82,8 +86,8 @@ pub fn setup_walls(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
         }
     }
 
-    let horizontal_wall_mesh: Mesh2dHandle = meshes.add(Rectangle::new(GRID_CELL_SIZE, 5.0)).into();
-    let vertical_wall_mesh: Mesh2dHandle = meshes.add(Rectangle::new(5.0, GRID_CELL_SIZE)).into();
+    let horizontal_wall_mesh: Handle<Mesh> = meshes.add(Rectangle::new(GRID_CELL_SIZE, 5.0)).into();
+    let vertical_wall_mesh: Handle<Mesh> = meshes.add(Rectangle::new(5.0, GRID_CELL_SIZE)).into();
 
     let start_x = 0;
     let start_y = 0;
@@ -102,11 +106,14 @@ pub fn setup_walls(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
         frontier.shuffle(&mut rng);
     }
 
+    let material = materials.add(Color::srgb(1.0, 1.0, 1.0));
+
     for (x, y, direction) in walls.iter() {
         place_wall(
             &mut commands,
             &horizontal_wall_mesh,
             &vertical_wall_mesh,
+            &material,
             *x,
             *y,
             *direction,
@@ -115,8 +122,9 @@ pub fn setup_walls(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
 }
 fn place_wall(
     commands: &mut Commands,
-    horizontal_wall_mesh: &Mesh2dHandle,
-    vertical_wall_mesh: &Mesh2dHandle,
+    horizontal_wall_mesh: &Handle<Mesh>,
+    vertical_wall_mesh: &Handle<Mesh>,
+    matrial: &Handle<ColorMaterial>,
     x: usize,
     y: usize,
     direction: Direction,
@@ -147,32 +155,32 @@ fn place_wall(
             (vertical_wall_mesh, aabb)
         };
         println!("wall center {center}");
-        commands.spawn(Text2dBundle {
-            transform: Transform::from_xyz(center.x, center.y, 1.),
-            text: Text::from_section(
-                format!("{}", center),
-                TextStyle {
-                    color: Color::srgb(230., 100., 100.),
-                    font_size: 10.,
-                    ..default()
-                },
-            ),
-            ..default()
-        });
+        //commands.spawn(Text2dBundle {
+        //    transform: Transform::from_xyz(center.x, center.y, 1.),
+        //    text: Text::from_section(
+        //        format!("{}", center),
+        //        TextStyle {
+        //            color: Color::srgb(230., 100., 100.),
+        //            font_size: 10.,
+        //            ..default()
+        //        },
+        //    ),
+        //    ..default()
+        //});
 
         commands
-            .spawn(ColorMesh2dBundle {
-                mesh: wall_mesh.clone(),
-
-                transform: Transform::from_xyz(wall_pos.0, wall_pos.1, 0.0),
-                ..Default::default()
-            })
+            .spawn((
+                Mesh2d(wall_mesh.clone()),
+                MeshMaterial2d(matrial.clone()),
+                RigidBody::Fixed,
+            ))
+            .insert(Transform::from_xyz(wall_pos.0, wall_pos.1, 0.))
             .insert(Wall {
                 wall_type: direction.into(),
             })
             .insert(Static)
             .insert(direction)
-            .insert(Collider::Aabb(aabb));
+            .insert(Collider::cuboid(aabb.half_extents.x, aabb.half_extents.y));
     }
 }
 

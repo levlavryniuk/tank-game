@@ -51,6 +51,7 @@ fn bullet_velocity_system(mut query: Query<(&mut Velocity, &Bullet)>) {
 fn shooting_system(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
     mut meshes: ResMut<Assets<Mesh>>,
     query: Query<&Transform, With<Tank>>,
 ) {
@@ -79,11 +80,18 @@ fn shooting_system(
     };
     let bullet = Bullet::new(rotate.to_degrees());
     commands
-        .spawn(ColorMesh2dBundle {
-            mesh: meshes.add(Circle::new(BULLET_SIZE)).into(),
-            transform: Transform::from_xyz(bullet_x, bullet_y, 0.),
-            ..default()
-        })
+        //.spawn(ColorMesh2dBundle {
+        //    mesh: meshes.add(Circle::new(BULLET_SIZE)).into(),
+        //    transform: Transform::from_xyz(bullet_x, bullet_y, 0.),
+        //    ..default()
+        //})
+        .spawn((
+            Mesh2d(meshes.add(Circle::new(BULLET_SIZE))),
+            MeshMaterial2d(
+                materials.add(ColorMaterial::from_color(Color::srgb(250.0, 50.0, 50.0))),
+            ),
+        ))
+        .insert(Transform::from_xyz(bullet_x, bullet_y, 0.))
         .insert(Velocity { x: 0., y: 0. })
         .insert(bullet)
         .insert(Collider::Aabb(aabb))
